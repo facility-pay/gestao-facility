@@ -14,7 +14,15 @@ import {
 } from "@/components/ui/card";
 import { LayoutDashboard, Loader2 } from "lucide-react";
 
-export default function LoginPage() {
+export default function LoginPageWrapper() {
+  return (
+    <React.Suspense fallback={null}>
+      <LoginPage />
+    </React.Suspense>
+  );
+}
+
+function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [username, setUsername] = React.useState("");
