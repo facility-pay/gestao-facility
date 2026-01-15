@@ -1,5 +1,5 @@
-import { NextAuthOptions } from "next-auth"
-import CredentialsProvider from "next-auth/providers/credentials"
+import { NextAuthOptions } from "next-auth";
+import CredentialsProvider from "next-auth/providers/credentials";
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -7,11 +7,11 @@ export const authOptions: NextAuthOptions = {
       name: "Credentials",
       credentials: {
         username: { label: "Usuário", type: "text" },
-        password: { label: "Senha", type: "password" }
+        password: { label: "Senha", type: "password" },
       },
       async authorize(credentials) {
-        const adminUsername = process.env.ADMIN_USERNAME
-        const adminPassword = process.env.ADMIN_PASSWORD
+        const adminUsername = process.env.ADMIN_USERNAME;
+        const adminPassword = process.env.ADMIN_PASSWORD;
 
         if (
           credentials?.username === adminUsername &&
@@ -20,13 +20,13 @@ export const authOptions: NextAuthOptions = {
           return {
             id: "1",
             name: "Admin",
-            email: "admin@facilitypay.com.br"
-          }
+            email: "admin@facilitypay.com.br",
+          };
         }
 
-        return null
-      }
-    })
+        return null;
+      },
+    }),
   ],
   pages: {
     signIn: "/login",
@@ -38,15 +38,16 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        token.id = user.id
+        token.id = user.id;
       }
-      return token
+      return token;
     },
     async session({ session, token }) {
       if (session.user) {
-        session.user.id = token.id as string
+        // @ts-expect-error thats needed
+        session.user.id = token.id as string;
       }
-      return session
-    }
-  }
-}
+      return session;
+    },
+  },
+};
