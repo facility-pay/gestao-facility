@@ -12,6 +12,7 @@ import {
   getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
+  Column,
 } from "@tanstack/react-table"
 import {
   Table,
@@ -36,23 +37,147 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Settings2, Download, Search, X } from "lucide-react"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import { Checkbox } from "@/components/ui/checkbox"
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Settings2, Download, Search, X, Filter } from "lucide-react"
+import { SaleRecord } from "@/types/order"
+import { cn } from "@/lib/utils"
 
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[]
   data: TData[]
   isLoading?: boolean
+  onDataChange?: (data: TData[]) => void
 }
 
-export function DataTable<TData, TValue>({
-  columns,
+// Sticky column widths (cumulative left positions)
+const STICKY_WIDTHS = {
+  0: 0,      // Cliente starts at 0
+  1: 150,    // CPF starts after Cliente (150px)
+}
+
+// Column filter component for multi-select filters
+function ColumnFilterPopover<TData>({
+  column,
   data,
+}: {
+  column: Column<TData, unknown>
+  data: TData[]
+}) {
+  const columnId = column.id
+  const filterValue = (column.getFilterValue() as string[]) || []
+
+  // Get unique values for this column
+  const uniqueValues = React.useMemo(() => {
+    const values = new Set<string>()
+    data.forEach((row) => {
+      const value = (row as Record<string, unknown>)[columnId]
+      if (value && value !== "-") {
+        values.add(String(value))
+      }
+    })
+    return Array.from(values).sort()
+  }, [data, columnId])
+
+  const handleToggle = (value: string) => {
+    const newFilter = filterValue.includes(value)
+      ? filterValue.filter((v) => v !== value)
+      : [...filterValue, value]
+    column.setFilterValue(newFilter.length > 0 ? newFilter : undefined)
+  }
+
+  const handleClear = () => {
+    column.setFilterValue(undefined)
+  }
+
+  if (uniqueValues.length === 0) return null
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn(
+            "h-6 w-6 p-0",
+            filterValue.length > 0 && "text-primary"
+          )}
+        >
+          <Filter className="h-3 w-3" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-56 p-2" align="start">
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium">Filtrar por {columnId}</span>
+            {filterValue.length > 0 && (
+              <Button variant="ghost" size="sm" onClick={handleClear} className="h-6 px-2 text-xs">
+                Limpar
+              </Button>
+            )}
+          </div>
+          <div className="max-h-48 overflow-auto space-y-1">
+            {uniqueValues.map((value) => (
+              <label
+                key={value}
+                className="flex items-center space-x-2 cursor-pointer hover:bg-muted p-1 rounded"
+              >
+                <Checkbox
+                  checked={filterValue.includes(value)}
+                  onCheckedChange={() => handleToggle(value)}
+                />
+                <span className="text-sm truncate">{value}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+export function DataTable<TData extends SaleRecord, TValue>({
+  columns,
+  data: initialData,
   isLoading,
+  onDataChange,
 }: DataTableProps<TData, TValue>) {
+  const [data, setData] = React.useState(initialData)
   const [sorting, setSorting] = React.useState<SortingState>([])
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
   const [globalFilter, setGlobalFilter] = React.useState("")
+
+  // Update local data when prop changes
+  React.useEffect(() => {
+    setData(initialData)
+  }, [initialData])
+
+  // Function to update data locally
+  const updateData = React.useCallback(
+    (rowIndex: number, columnId: string, value: unknown) => {
+      setData((old) => {
+        const newData = old.map((row, index) => {
+          if (index === rowIndex) {
+            return {
+              ...row,
+              [columnId]: value,
+            }
+          }
+          return row
+        })
+        if (onDataChange) {
+          onDataChange(newData)
+        }
+        return newData
+      })
+    },
+    [onDataChange]
+  )
 
   const table = useReactTable({
     data,
@@ -76,25 +201,67 @@ export function DataTable<TData, TValue>({
         pageSize: 25,
       },
     },
+    meta: {
+      updateData,
+    },
   })
 
+  // Get sticky styles for header/cell
+  const getStickyStyles = (columnId: string, columnMeta?: { sticky?: boolean; stickyPosition?: number }) => {
+    if (!columnMeta?.sticky) return {}
+
+    const position = columnMeta.stickyPosition ?? 0
+    const left = STICKY_WIDTHS[position as keyof typeof STICKY_WIDTHS] ?? 0
+
+    return {
+      position: "sticky" as const,
+      left: `${left}px`,
+      zIndex: 10,
+      backgroundColor: "hsl(var(--background))",
+      boxShadow: position === 1 ? "2px 0 4px rgba(0,0,0,0.1)" : undefined,
+    }
+  }
+
+  // Check if a column has multi-select filter type
+  const hasMultiSelectFilter = (column: Column<TData, unknown>) => {
+    const meta = column.columnDef.meta
+    return meta?.filterType === "multi-select"
+  }
+
+  // Fixed CSV export - uses raw data values with proper formatting
   const exportToCSV = () => {
     const visibleColumns = table.getVisibleLeafColumns()
-    const headers = visibleColumns.map((col) => col.id)
     const rows = table.getFilteredRowModel().rows
 
-    const csvContent = [
-      headers.join(","),
-      ...rows.map((row) =>
-        visibleColumns
-          .map((col) => {
-            const value = row.getValue(col.id)
-            const stringValue = value?.toString() || ""
-            return `"${stringValue.replace(/"/g, '""')}"`
-          })
-          .join(",")
-      ),
-    ].join("\n")
+    // Create header row with readable column names
+    const headers = visibleColumns.map((col) => {
+      const header = col.columnDef.header
+      if (typeof header === "string") return header
+      return col.id
+    })
+
+    // Create data rows using csvFormatter from column meta
+    const csvRows = rows.map((row) =>
+      visibleColumns.map((col) => {
+        const rawValue = row.original[col.id as keyof SaleRecord]
+        const csvFormatter = col.columnDef.meta?.csvFormatter
+
+        let stringValue: string
+        if (csvFormatter) {
+          stringValue = csvFormatter(rawValue)
+        } else if (rawValue === null || rawValue === undefined) {
+          stringValue = ""
+        } else if (typeof rawValue === "object") {
+          stringValue = JSON.stringify(rawValue)
+        } else {
+          stringValue = String(rawValue)
+        }
+
+        return `"${stringValue.replace(/"/g, '""')}"`
+      }).join(",")
+    )
+
+    const csvContent = [headers.join(","), ...csvRows].join("\n")
 
     const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" })
     const url = URL.createObjectURL(blob)
@@ -106,6 +273,9 @@ export function DataTable<TData, TValue>({
     document.body.removeChild(link)
     URL.revokeObjectURL(url)
   }
+
+  // Get active filters count
+  const activeFiltersCount = columnFilters.length
 
   return (
     <div className="space-y-4">
@@ -129,6 +299,17 @@ export function DataTable<TData, TValue>({
               </button>
             )}
           </div>
+          {activeFiltersCount > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setColumnFilters([])}
+              className="text-muted-foreground"
+            >
+              Limpar filtros ({activeFiltersCount})
+              <X className="ml-1 h-3 w-3" />
+            </Button>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Button onClick={exportToCSV} variant="outline" size="sm">
@@ -163,22 +344,54 @@ export function DataTable<TData, TValue>({
         </div>
       </div>
 
-      {/* Table */}
-      <div className="rounded-md border">
-        <Table>
+      {/* Table with always-visible horizontal scrollbar */}
+      <div
+        className={cn(
+          "rounded-md border overflow-x-auto",
+          "[&::-webkit-scrollbar]:h-3",
+          "[&::-webkit-scrollbar]:block",
+          "[&::-webkit-scrollbar-track]:bg-muted",
+          "[&::-webkit-scrollbar-track]:rounded-full",
+          "[&::-webkit-scrollbar-thumb]:bg-muted-foreground/30",
+          "[&::-webkit-scrollbar-thumb]:rounded-full",
+          "[&::-webkit-scrollbar-thumb:hover]:bg-muted-foreground/50"
+        )}
+        style={{ scrollbarGutter: "stable" }}
+      >
+        <Table className="min-w-max">
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <TableHead key={header.id} className="whitespace-nowrap">
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(
-                          header.column.columnDef.header,
-                          header.getContext()
+                {headerGroup.headers.map((header) => {
+                  const meta = header.column.columnDef.meta
+                  const stickyStyles = getStickyStyles(header.column.id, meta)
+
+                  return (
+                    <TableHead
+                      key={header.id}
+                      className={cn(
+                        "whitespace-nowrap",
+                        meta?.sticky && "bg-background"
+                      )}
+                      style={stickyStyles}
+                    >
+                      <div className="flex items-center gap-1">
+                        {header.isPlaceholder
+                          ? null
+                          : flexRender(
+                              header.column.columnDef.header,
+                              header.getContext()
+                            )}
+                        {hasMultiSelectFilter(header.column) && (
+                          <ColumnFilterPopover
+                            column={header.column}
+                            data={data}
+                          />
                         )}
-                  </TableHead>
-                ))}
+                      </div>
+                    </TableHead>
+                  )
+                })}
               </TableRow>
             ))}
           </TableHeader>
@@ -198,14 +411,26 @@ export function DataTable<TData, TValue>({
                   key={row.id}
                   data-state={row.getIsSelected() && "selected"}
                 >
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id} className="whitespace-nowrap">
-                      {flexRender(
-                        cell.column.columnDef.cell,
-                        cell.getContext()
-                      )}
-                    </TableCell>
-                  ))}
+                  {row.getVisibleCells().map((cell) => {
+                    const meta = cell.column.columnDef.meta
+                    const stickyStyles = getStickyStyles(cell.column.id, meta)
+
+                    return (
+                      <TableCell
+                        key={cell.id}
+                        className={cn(
+                          "whitespace-nowrap",
+                          meta?.sticky && "bg-background"
+                        )}
+                        style={stickyStyles}
+                      >
+                        {flexRender(
+                          cell.column.columnDef.cell,
+                          cell.getContext()
+                        )}
+                      </TableCell>
+                    )
+                  })}
                 </TableRow>
               ))
             ) : (
